@@ -5,12 +5,16 @@ export interface WebSource {
   snippet: string;
 }
 
-export async function fetchWebSources(query: string, count = 8): Promise<WebSource[]> {
+export async function fetchWebSources(
+  query: string,
+  count = 8,
+  offset = 0,
+): Promise<WebSource[]> {
   try {
     const resp = await fetch("/api/web-search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, count }),
+      body: JSON.stringify({ query, count, offset }),
     });
     if (!resp.ok) return [];
     const data = (await resp.json()) as { results?: WebSource[] };
@@ -28,14 +32,7 @@ export async function fetchWebSources(query: string, count = 8): Promise<WebSour
 export function buildResearchQueries(question: string): string[] {
   const q = (question || "").trim().replace(/\s+/g, " ").slice(0, 220);
   if (!q) return [];
-  return [
-    q,
-    `${q} 2026`,
-    `${q} latest news`,
-    `${q} analysis report`,
-    `${q} statistics data`,
-    `${q} pros and cons`,
-  ];
+  return [q, `${q} latest news analysis`, `${q} data statistics report`];
 }
 
 export async function fetchResearchSources(
@@ -44,7 +41,18 @@ export async function fetchResearchSources(
 ): Promise<WebSource[]> {
   const queries = buildResearchQueries(question);
   if (!queries.length) return [];
-  const batches = await Promise.all(queries.map((q) => fetchWebSources(q, 12)));
+  // A single result page tops out around 20 links, so read three pages per
+  // angle. Search engines throttle bursts, so pace the calls in small waves
+  // instead of firing every request at once.
+  const jobs: Array<[string, number]> = [];
+  for (const q of queries) for (const offset of [0, 20, 40]) jobs.push([q, offset]);
+
+  const batches: WebSource[][] = [];
+  for (let i = 0; i < jobs.length; i += 3) {
+    const wave = jobs.slice(i, i + 3);
+    batches.push(...(await Promise.all(wave.map(([q, o]) => fetchWebSources(q, 20, o)))));
+    if (i + 3 < jobs.length) await new Promise((r) => setTimeout(r, 600));
+  }
   const seen = new Set<string>();
   const out: WebSource[] = [];
   // Round-robin across queries so every angle is represented, not just the first.
