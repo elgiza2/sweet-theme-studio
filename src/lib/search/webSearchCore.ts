@@ -197,31 +197,30 @@ async function bingRssSearch(query: string, count: number, offset = 0): Promise<
   }
 }
 
-/** Brave first, Bing RSS as backup, so a blocked provider never zeroes out research. */
+/**
+ * Brave throttles bursts hard (429), so every keyless lookup goes through one
+ * queue that spaces requests out and backs off on throttling. The RSS backup
+ * was removed on purpose: it answered with cached, unrelated pages, and junk
+ * sources damage a research report more than missing ones.
+ */
+let braveQueue: Promise<unknown> = Promise.resolve();
+let lastBraveAt = 0;
+
 async function keylessSearch(query: string, count: number, offset = 0): Promise<WebSearchResponse> {
-  // Brave rate-limits bursts (429) but recovers within a second or two, and its
-  // results are far more on-topic than the RSS backup — so back off and retry
-  // before falling through.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const brave = await braveSearch(query, count, offset);
-    if (brave.results.length) return brave;
-    if (!/429/.test(brave.error ?? "")) break;
-    await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
-  }
-  // The RSS backup regularly answers with cached, unrelated pages, and junk
-  // sources poison a research report worse than fewer sources do — so only keep
-  // results that actually mention part of the query.
-  const backup = await bingRssSearch(query, count, offset);
-  const terms = query
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((t) => t.length > 3);
-  if (!terms.length) return backup;
-  const relevant = backup.results.filter((r) => {
-    const hay = `${r.title} ${r.snippet} ${r.url}`.toLowerCase();
-    return terms.some((t) => hay.includes(t));
+  const run = braveQueue.then(async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const wait = Math.max(0, 1300 - (Date.now() - lastBraveAt));
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      lastBraveAt = Date.now();
+      const brave = await braveSearch(query, count, offset);
+      if (brave.results.length) return brave;
+      if (!/429/.test(brave.error ?? "")) return brave;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
+    return { results: [], error: "search rate limited" } as WebSearchResponse;
   });
-  return relevant.length ? { results: relevant } : { results: [], error: "no relevant results" };
+  braveQueue = run.catch(() => undefined);
+  return run;
 }
 
 /**
