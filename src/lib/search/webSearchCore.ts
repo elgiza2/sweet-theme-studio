@@ -162,7 +162,7 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
     const { data, error } = await supabase.rpc("next_provider_key", { p_provider: "y" });
     const row = Array.isArray(data) ? (data[0] as { id: string; api_key: string } | undefined) : undefined;
     if (error) return duckDuckGoSearch(trimmed, count);
-    if (!row?.api_key) return { results: [], error: lastError };
+    if (!row?.api_key) return duckDuckGoSearch(trimmed, count);
 
     const result = await callYou(row.api_key, trimmed, count);
     if (result.ok && result.results.length) {
@@ -171,7 +171,7 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
     }
     if (result.ok) {
       await supabase.rpc("report_provider_key_success", { p_key_id: row.id });
-      return { results: [] };
+      return duckDuckGoSearch(trimmed, count);
     }
     lastError = `HTTP ${result.status}`;
     await supabase.rpc("report_provider_key_failure", {
