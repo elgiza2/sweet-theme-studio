@@ -208,7 +208,20 @@ async function keylessSearch(query: string, count: number, offset = 0): Promise<
     if (!/429/.test(brave.error ?? "")) break;
     await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
   }
-  return bingRssSearch(query, count, offset);
+  // The RSS backup regularly answers with cached, unrelated pages, and junk
+  // sources poison a research report worse than fewer sources do — so only keep
+  // results that actually mention part of the query.
+  const backup = await bingRssSearch(query, count, offset);
+  const terms = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length > 3);
+  if (!terms.length) return backup;
+  const relevant = backup.results.filter((r) => {
+    const hay = `${r.title} ${r.snippet} ${r.url}`.toLowerCase();
+    return terms.some((t) => hay.includes(t));
+  });
+  return relevant.length ? { results: relevant } : { results: [], error: "no relevant results" };
 }
 
 /**

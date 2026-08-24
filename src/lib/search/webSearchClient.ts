@@ -48,10 +48,10 @@ export async function fetchResearchSources(
   for (const q of queries) for (const offset of [0, 20, 40]) jobs.push([q, offset]);
 
   const batches: WebSource[][] = [];
-  for (let i = 0; i < jobs.length; i += 3) {
-    const wave = jobs.slice(i, i + 3);
+  for (let i = 0; i < jobs.length; i += 2) {
+    const wave = jobs.slice(i, i + 2);
     batches.push(...(await Promise.all(wave.map(([q, o]) => fetchWebSources(q, 20, o)))));
-    if (i + 3 < jobs.length) await new Promise((r) => setTimeout(r, 600));
+    if (i + 2 < jobs.length) await new Promise((r) => setTimeout(r, 1500));
   }
   const seen = new Set<string>();
   const out: WebSource[] = [];
