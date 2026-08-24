@@ -420,7 +420,10 @@ export async function runChatStreamTurn(opts: RunChatStreamTurnOptions): Promise
     }
   }
 
-  const smartSearch = isDeepResearch ? true : shouldUseWebSearch(lastUserText, searchEnabled);
+  // Deep Research fetches its own live sources above. Leaving the backend's
+  // own web tool on makes the stream hang with zero tokens (verified), so it
+  // stays off for research turns.
+  const smartSearch = isDeepResearch ? false : shouldUseWebSearch(lastUserText, searchEnabled);
 
   // Learning Mode is our highest-stakes UX — always route to a strong
   // reasoning model so tap-answer replies stay smart and on-topic.
@@ -447,7 +450,11 @@ export async function runChatStreamTurn(opts: RunChatStreamTurnOptions): Promise
     // research job, no pending placeholder bubbles.
     onJobStart: undefined,
 
-    chatMode: chatMode,
+    // Sending chatMode="deep-research" makes the backend spin up its legacy
+    // server-side research agent, which never emits a token (verified: 180s of
+    // silence). Our own research pipeline already fetched the sources, so the
+    // turn is streamed as a normal chat turn.
+    chatMode: isDeepResearch ? "normal" : chatMode,
     user_id: chatUserId || undefined,
     conversation_id: backgroundCid || conversationId || undefined,
     // Computer-use tooling stalls the Deep Research stream on the backend.

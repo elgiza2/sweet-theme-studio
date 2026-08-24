@@ -83,6 +83,63 @@ async function callYou(apiKey: string, query: string, count: number) {
   }
 }
 
+function decodeHtml(input: string): string {
+  return input
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Keyless fallback provider (Bing RSS) so Deep Research always has live sources. */
+async function duckDuckGoSearch(query: string, count: number): Promise<WebSearchResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const url = new URL("https://www.bing.com/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "rss");
+    url.searchParams.set("count", String(Math.min(Math.max(count, 1), 20)));
+    url.searchParams.set("mkt", "en-US");
+    const resp = await fetch(url.toString(), {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        Accept: "application/rss+xml, application/xml, text/xml",
+      },
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { results: [], error: `search HTTP ${resp.status}` };
+    const xml = await resp.text();
+    const results: WebSearchResult[] = [];
+    const seen = new Set<string>();
+    const itemRe = /<item>([\s\S]*?)<\/item>/g;
+    let m: RegExpExecArray | null;
+    while ((m = itemRe.exec(xml)) && results.length < count) {
+      const block = m[1];
+      const link = decodeHtml(block.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? "");
+      if (!/^https?:\/\//.test(link) || seen.has(link)) continue;
+      seen.add(link);
+      results.push({
+        title: decodeHtml(block.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? link).slice(0, 220),
+        url: link,
+        snippet: decodeHtml(block.match(/<description>([\s\S]*?)<\/description>/)?.[1] ?? "").slice(0, 900),
+      });
+    }
+    return results.length ? { results } : { results: [], error: "no results" };
+  } catch (err) {
+    return { results: [], error: err instanceof Error ? err.message : "search failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Runs a web search, rotating through the pooled keys. A key that errors is
  * reported (3 strikes → blocked) and the next key is tried automatically.
@@ -91,14 +148,22 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
   const trimmed = (query || "").trim();
   if (!trimmed) return { results: [], error: "empty query" };
 
-  const supabase = serverClient();
+  let supabase: ReturnType<typeof serverClient>;
+  try {
+    supabase = serverClient();
+  } catch {
+    // No server credentials (local/preview runtime): Deep Research still needs
+    // live sources, so fall back to the keyless provider instead of returning
+    // an empty list, which makes the model answer without any evidence.
+    return duckDuckGoSearch(trimmed, count);
+  }
   let lastError = "no keys configured";
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const { data, error } = await supabase.rpc("next_provider_key", { p_provider: "y" });
     const row = Array.isArray(data) ? (data[0] as { id: string; api_key: string } | undefined) : undefined;
-    if (error) return { results: [], error: "key pool unavailable" };
-    if (!row?.api_key) return { results: [], error: lastError };
+    if (error) return duckDuckGoSearch(trimmed, count);
+    if (!row?.api_key) return duckDuckGoSearch(trimmed, count);
 
     const result = await callYou(row.api_key, trimmed, count);
     if (result.ok && result.results.length) {
@@ -107,7 +172,7 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
     }
     if (result.ok) {
       await supabase.rpc("report_provider_key_success", { p_key_id: row.id });
-      return { results: [] };
+      return duckDuckGoSearch(trimmed, count);
     }
     lastError = `HTTP ${result.status}`;
     await supabase.rpc("report_provider_key_failure", {
