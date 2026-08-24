@@ -405,7 +405,7 @@ export async function runChatStreamTurn(opts: RunChatStreamTurnOptions): Promise
     setSearchStatus("Searching the web and checking sources...");
     // Our own research agent fetches live sources first, then reasons over
     // them — the backend model has no web access of its own.
-    const sources = await fetchWebSources(lastUserText, 10);
+    const sources = await fetchResearchSources(lastUserText, 30);
     if (sources.length) {
       setSearchStatus(`Reading ${sources.length} sources...`);
       const block = formatSourcesBlock(sources);
