@@ -91,7 +91,7 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
   const trimmed = (query || "").trim();
   if (!trimmed) return { results: [], error: "empty query" };
 
-  let supabase: ReturnType<typeof createClient>;
+  let supabase: ReturnType<typeof serverClient>;
   try {
     supabase = serverClient();
   } catch {
