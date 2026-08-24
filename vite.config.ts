@@ -316,6 +316,7 @@ export default defineConfig({
     manusAdminDevPlugin(),
     computerAgentDevPlugin(),
     webSearchDevPlugin(),
+    transcribeDevPlugin(),
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: null,
