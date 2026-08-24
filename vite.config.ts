@@ -244,6 +244,62 @@ function webSearchDevPlugin(): Plugin {
   };
 }
 
+/** Dev-server equivalent of api/transcribe.ts (composer mic dictation). */
+function transcribeDevPlugin(): Plugin {
+  return {
+    name: "transcribe-dev",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use("/api/transcribe", (req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Cache-Control", "no-store");
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: "Method not allowed" }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (c) => chunks.push(Buffer.from(c)));
+        req.on("end", async () => {
+          try {
+            const buf = Buffer.concat(chunks);
+            const request = new Request("http://localhost/api/transcribe", {
+              method: "POST",
+              headers: { "content-type": String(req.headers["content-type"] || "") },
+              body: buf,
+            });
+            const form = await request.formData();
+            const file = form.get("file");
+            const language = String(form.get("language") || "") || undefined;
+            if (!(file instanceof Blob)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ text: "", error: "No audio uploaded" }));
+              return;
+            }
+            const { transcribeAudio } = await import("./src/lib/audio/transcribeCore");
+            const filename = (file as File).name || undefined;
+            const { status, body } = await transcribeAudio(file, { language, filename });
+            res.statusCode = status;
+            res.end(JSON.stringify(body));
+          } catch (error) {
+            res.statusCode = 500;
+            res.end(
+              JSON.stringify({
+                text: "",
+                error: error instanceof Error ? error.message : "transcription_failed",
+              }),
+            );
+          }
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react({
@@ -261,6 +317,7 @@ export default defineConfig({
     manusAdminDevPlugin(),
     computerAgentDevPlugin(),
     webSearchDevPlugin(),
+    transcribeDevPlugin(),
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: null,
