@@ -447,7 +447,11 @@ export async function runChatStreamTurn(opts: RunChatStreamTurnOptions): Promise
     // research job, no pending placeholder bubbles.
     onJobStart: undefined,
 
-    chatMode: chatMode,
+    // Sending chatMode="deep-research" makes the backend spin up its legacy
+    // server-side research agent, which never emits a token (verified: 180s of
+    // silence). Our own research pipeline already fetched the sources, so the
+    // turn is streamed as a normal chat turn.
+    chatMode: isDeepResearch ? "normal" : chatMode,
     user_id: chatUserId || undefined,
     conversation_id: backgroundCid || conversationId || undefined,
     // Computer-use tooling stalls the Deep Research stream on the backend.
