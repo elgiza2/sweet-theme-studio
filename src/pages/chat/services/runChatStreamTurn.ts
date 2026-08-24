@@ -6,7 +6,7 @@ import { getCachedUser } from "@/lib/cachedUser";
 import { streamChat, GUEST_QUOTA_ERROR } from "@/lib/streamChat";
 import { addActiveChatJob, removeActiveChatJob } from "@/lib/jobs/chatResume";
 import { shouldUseWebSearch } from "@/lib/shouldUseWebSearch";
-import { fetchWebSources, formatSourcesBlock } from "@/lib/search/webSearchClient";
+import { fetchResearchSources, formatSourcesBlock } from "@/lib/search/webSearchClient";
 import {
   makeLeakedToolStreamSanitizer,
   sanitizeLeakedToolText,
