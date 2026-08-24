@@ -420,7 +420,10 @@ export async function runChatStreamTurn(opts: RunChatStreamTurnOptions): Promise
     }
   }
 
-  const smartSearch = isDeepResearch ? true : shouldUseWebSearch(lastUserText, searchEnabled);
+  // Deep Research fetches its own live sources above. Leaving the backend's
+  // own web tool on makes the stream hang with zero tokens (verified), so it
+  // stays off for research turns.
+  const smartSearch = isDeepResearch ? false : shouldUseWebSearch(lastUserText, searchEnabled);
 
   // Learning Mode is our highest-stakes UX — always route to a strong
   // reasoning model so tap-answer replies stay smart and on-topic.
