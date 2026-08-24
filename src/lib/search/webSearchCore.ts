@@ -83,6 +83,62 @@ async function callYou(apiKey: string, query: string, count: number) {
   }
 }
 
+function decodeHtml(input: string): string {
+  return input
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Keyless fallback provider so Deep Research always has live sources. */
+async function duckDuckGoSearch(query: string, count: number): Promise<WebSearchResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const resp = await fetch("https://html.duckduckgo.com/html/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+      },
+      body: new URLSearchParams({ q: query }).toString(),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { results: [], error: `search HTTP ${resp.status}` };
+    const html = await resp.text();
+    const results: WebSearchResult[] = [];
+    const seen = new Set<string>();
+    const blockRe =
+      /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<a[^>]+class="[^"]*result__a|<\/div>\s*<\/div>\s*<\/div>)/g;
+    let m: RegExpExecArray | null;
+    while ((m = blockRe.exec(html)) && results.length < count) {
+      let url = m[1];
+      const uddg = url.match(/[?&]uddg=([^&]+)/);
+      if (uddg) url = decodeURIComponent(uddg[1]);
+      if (!/^https?:\/\//.test(url) || seen.has(url)) continue;
+      const snippetMatch = m[3].match(/class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/);
+      seen.add(url);
+      results.push({
+        title: decodeHtml(m[2]).slice(0, 220),
+        url,
+        snippet: snippetMatch ? decodeHtml(snippetMatch[1]).slice(0, 900) : "",
+      });
+    }
+    return results.length ? { results } : { results: [], error: "no results" };
+  } catch (err) {
+    return { results: [], error: err instanceof Error ? err.message : "search failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Runs a web search, rotating through the pooled keys. A key that errors is
  * reported (3 strikes → blocked) and the next key is tried automatically.
