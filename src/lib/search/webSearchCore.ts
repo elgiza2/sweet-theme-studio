@@ -91,13 +91,21 @@ export async function webSearch(query: string, count = 8): Promise<WebSearchResp
   const trimmed = (query || "").trim();
   if (!trimmed) return { results: [], error: "empty query" };
 
-  const supabase = serverClient();
+  let supabase: ReturnType<typeof createClient>;
+  try {
+    supabase = serverClient();
+  } catch {
+    // No server credentials (local/preview runtime): Deep Research still needs
+    // live sources, so fall back to the keyless provider instead of returning
+    // an empty list, which makes the model answer without any evidence.
+    return duckDuckGoSearch(trimmed, count);
+  }
   let lastError = "no keys configured";
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const { data, error } = await supabase.rpc("next_provider_key", { p_provider: "y" });
     const row = Array.isArray(data) ? (data[0] as { id: string; api_key: string } | undefined) : undefined;
-    if (error) return { results: [], error: "key pool unavailable" };
+    if (error) return duckDuckGoSearch(trimmed, count);
     if (!row?.api_key) return { results: [], error: lastError };
 
     const result = await callYou(row.api_key, trimmed, count);
