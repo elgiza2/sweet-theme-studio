@@ -218,7 +218,7 @@ function webSearchDevPlugin(): Plugin {
         const chunks: Buffer[] = [];
         req.on("data", (c) => chunks.push(Buffer.from(c)));
         req.on("end", async () => {
-          let payload: { query?: string; count?: number } | null = null;
+          let payload: { query?: string; count?: number; offset?: number } | null = null;
           try {
             payload = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null;
           } catch {
@@ -226,7 +226,11 @@ function webSearchDevPlugin(): Plugin {
           }
           try {
             const { webSearch } = await import("./src/lib/search/webSearchCore");
-            const data = await webSearch(String(payload?.query ?? ""), Number(payload?.count ?? 8));
+            const data = await webSearch(
+              String(payload?.query ?? ""),
+              Number(payload?.count ?? 8),
+              Number(payload?.offset ?? 0),
+            );
             res.statusCode = 200;
             res.end(JSON.stringify(data));
           } catch (error) {

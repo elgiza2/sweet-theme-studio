@@ -17,11 +17,11 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const body = (await req.json().catch(() => null)) as
-    | { query?: string; count?: number }
+    | { query?: string; count?: number; offset?: number }
     | null;
 
   try {
-    const data = await webSearch(String(body?.query ?? ""), Number(body?.count ?? 8));
+    const data = await webSearch(String(body?.query ?? ""), Number(body?.count ?? 8), Number(body?.offset ?? 0));
     return new Response(JSON.stringify(data), { status: 200, headers });
   } catch (err) {
     return new Response(
