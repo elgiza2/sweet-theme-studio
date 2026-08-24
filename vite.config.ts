@@ -281,7 +281,8 @@ function transcribeDevPlugin(): Plugin {
               return;
             }
             const { transcribeAudio } = await import("./src/lib/audio/transcribeCore");
-            const { status, body } = await transcribeAudio(file, { language });
+            const filename = (file as File).name || undefined;
+            const { status, body } = await transcribeAudio(file, { language, filename });
             res.statusCode = status;
             res.end(JSON.stringify(body));
           } catch (error) {

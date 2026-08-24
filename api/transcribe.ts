@@ -26,7 +26,8 @@ export default async function handler(req: Request): Promise<Response> {
         headers,
       });
     }
-    const { status, body } = await transcribeAudio(file, { language });
+    const filename = (file as File).name || undefined;
+    const { status, body } = await transcribeAudio(file, { language, filename });
     return new Response(JSON.stringify(body), { status, headers });
   } catch (err) {
     return new Response(
