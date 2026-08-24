@@ -150,53 +150,6 @@ async function braveSearch(query: string, count: number, offset = 0): Promise<We
   }
 }
 
-/** Secondary keyless provider (Bing RSS) used when Brave returns nothing. */
-async function bingRssSearch(query: string, count: number, offset = 0): Promise<WebSearchResponse> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const url = new URL("https://www.bing.com/search");
-    url.searchParams.set("q", query);
-    url.searchParams.set("format", "rss");
-    url.searchParams.set("count", String(Math.min(Math.max(count, 1), 20)));
-    url.searchParams.set("mkt", "en-US");
-    // Bing RSS caps each page at ~10 items; paging is how Deep Research reaches
-    // enough distinct sources instead of re-reading the same first page.
-    if (offset > 0) url.searchParams.set("first", String(offset + 1));
-    const resp = await fetch(url.toString(), {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        Accept: "application/rss+xml, application/xml, text/xml",
-      },
-      signal: controller.signal,
-    });
-    if (!resp.ok) return { results: [], error: `search HTTP ${resp.status}` };
-    const xml = await resp.text();
-    const results: WebSearchResult[] = [];
-    const seen = new Set<string>();
-    const itemRe = /<item>([\s\S]*?)<\/item>/g;
-    let m: RegExpExecArray | null;
-    while ((m = itemRe.exec(xml)) && results.length < count) {
-      const block = m[1];
-      const link = decodeHtml(block.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? "");
-      if (!/^https?:\/\//.test(link) || seen.has(link)) continue;
-      seen.add(link);
-      results.push({
-        title: decodeHtml(block.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? link).slice(0, 220),
-        url: link,
-        snippet: decodeHtml(block.match(/<description>([\s\S]*?)<\/description>/)?.[1] ?? "").slice(0, 900),
-      });
-    }
-    return results.length ? { results } : { results: [], error: "no results" };
-  } catch (err) {
-    return { results: [], error: err instanceof Error ? err.message : "search failed" };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * Brave throttles bursts hard (429), so every keyless lookup goes through one
  * queue that spaces requests out and backs off on throttling. The RSS backup
