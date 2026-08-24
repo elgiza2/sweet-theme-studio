@@ -151,29 +151,94 @@ async function braveSearch(query: string, count: number, offset = 0): Promise<We
 }
 
 /**
- * Brave throttles bursts hard (429), so every keyless lookup goes through one
- * queue that spaces requests out and backs off on throttling. The RSS backup
- * was removed on purpose: it answered with cached, unrelated pages, and junk
- * sources damage a research report more than missing ones.
+ * Google News RSS: always reachable (no key, no throttling) and always on
+ * topic, which makes it the dependable half of the keyless path. It returns a
+ * long single list, so paging is a slice of that list.
+ */
+async function googleNewsSearch(
+  query: string,
+  count: number,
+  offset = 0,
+): Promise<WebSearchResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const url = new URL("https://news.google.com/rss/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("hl", "en-US");
+    url.searchParams.set("gl", "US");
+    url.searchParams.set("ceid", "US:en");
+    const resp = await fetch(url.toString(), {
+      headers: { "User-Agent": BROWSER_UA, Accept: "application/rss+xml, application/xml" },
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { results: [], error: `news HTTP ${resp.status}` };
+    const xml = await resp.text();
+    const all: WebSearchResult[] = [];
+    const seen = new Set<string>();
+    const itemRe = /<item>([\s\S]*?)<\/item>/g;
+    let m: RegExpExecArray | null;
+    while ((m = itemRe.exec(xml))) {
+      const block = m[1];
+      const link = decodeHtml(block.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? "");
+      if (!/^https?:\/\//.test(link) || seen.has(link)) continue;
+      seen.add(link);
+      const source = decodeHtml(block.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1] ?? "");
+      const title = decodeHtml(block.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? link);
+      const date = decodeHtml(block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] ?? "");
+      all.push({
+        title: title.slice(0, 220),
+        url: link,
+        snippet: [source, date, decodeHtml(block.match(/<description>([\s\S]*?)<\/description>/)?.[1] ?? "")]
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 900),
+      });
+    }
+    const page = all.slice(offset, offset + count);
+    return page.length ? { results: page } : { results: [], error: "no results" };
+  } catch (err) {
+    return { results: [], error: err instanceof Error ? err.message : "search failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Keyless path. Brave gives the best general web results but throttles bursts
+ * hard (429), so its calls go through one spaced-out queue; Google News fills
+ * the rest. The old Bing RSS backup was dropped on purpose — it answered with
+ * cached, unrelated pages, and junk sources damage a report more than missing
+ * ones.
  */
 let braveQueue: Promise<unknown> = Promise.resolve();
 let lastBraveAt = 0;
 
-async function keylessSearch(query: string, count: number, offset = 0): Promise<WebSearchResponse> {
+async function bravePaced(query: string, count: number, offset: number): Promise<WebSearchResult[]> {
   const run = braveQueue.then(async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const wait = Math.max(0, 1300 - (Date.now() - lastBraveAt));
-      if (wait) await new Promise((r) => setTimeout(r, wait));
-      lastBraveAt = Date.now();
-      const brave = await braveSearch(query, count, offset);
-      if (brave.results.length) return brave;
-      if (!/429/.test(brave.error ?? "")) return brave;
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
-    }
-    return { results: [], error: "search rate limited" } as WebSearchResponse;
+    const wait = Math.max(0, 1300 - (Date.now() - lastBraveAt));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    lastBraveAt = Date.now();
+    const brave = await braveSearch(query, count, offset);
+    return brave.results;
   });
   braveQueue = run.catch(() => undefined);
-  return run;
+  return run.catch(() => [] as WebSearchResult[]);
+}
+
+async function keylessSearch(query: string, count: number, offset = 0): Promise<WebSearchResponse> {
+  const [brave, news] = await Promise.all([
+    bravePaced(query, count, offset),
+    googleNewsSearch(query, count, offset),
+  ]);
+  const seen = new Set<string>();
+  const merged: WebSearchResult[] = [];
+  for (const item of [...brave, ...news.results]) {
+    if (seen.has(item.url) || merged.length >= count) continue;
+    seen.add(item.url);
+    merged.push(item);
+  }
+  return merged.length ? { results: merged } : { results: [], error: news.error ?? "no results" };
 }
 
 /**
